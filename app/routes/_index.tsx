@@ -5,9 +5,14 @@ import {
   GoogleMap,
   useJsApiLoader,
   Marker,
+  MarkerF,
+  Circle,
   Autocomplete,
+  InfoWindowF,
+  DirectionsRenderer,
 } from "@react-google-maps/api";
-import { useCallback, useState, useEffect, useRef } from "react";
+
+import { useCallback, useState, useEffect, useRef, RefObject } from "react";
 
 export const meta: MetaFunction = () => {
   return [{ title: "Location Finder" }];
@@ -43,32 +48,77 @@ export default function Index() {
   });
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [loadingLocation, setLoadingLocation] = useState(true);
-  const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
-  const [selectedLocation, setSelectedLocation] = useState<Location | null>(
+  const [searchResultOrigin, setSearchResultOrigin] =
+    useState<SearchResult | null>(null);
+  const [searchResultDest, setSearchResultDest] = useState<SearchResult | null>(
     null
   );
-  const [address, setAddress] = useState<string>("");
+  const [originLocation, setOriginLocation] = useState<Location | null>(null);
+  const [destLocation, setDestLocation] = useState<Location | null>(null);
+  const [radius, setRadius] = useState<number>(0);
+  const [mapInitialized, setMapInitialized] = useState(false);
+  const [infowindowOpen, setInfowindowOpen] = useState(true);
+  const originRef = useRef<HTMLInputElement>(null);
+  const destRef = useRef<HTMLInputElement>(null);
 
-  const autocompleteRef = useRef<HTMLInputElement>(null);
-  const geocodeLatLng = (lat: number, lng: number) => {
+  const [directionsResponse, setDirectionsResponse] = useState<any>(null);
+  const [distance, setDistance] = useState("");
+  const [duration, setDuration] = useState("");
+  const geocodeLatLng = (
+    lat: number,
+    lng: number,
+    inputRef: RefObject<HTMLInputElement>
+  ) => {
     const geocoder = new google.maps.Geocoder();
     const latLng = new google.maps.LatLng(lat, lng);
 
     geocoder.geocode({ location: latLng }, (results, status) => {
       if (status === "OK" && results[0]) {
-        setAddress(results[0].formatted_address);
-        if (autocompleteRef.current) {
-          autocompleteRef.current.value = results[0].formatted_address;
+        if (inputRef.current) {
+          inputRef.current.value = results[0].formatted_address;
         }
       } else {
         console.error("Geocoder failed due to:", status);
       }
     });
   };
+
   const containerStyle = {
-    width: "700px",
-    height: "700px",
+    width: "100%",
+    height: "100%",
   };
+  async function showRoute() {
+    if (!originRef.current?.value || !destRef.current?.value) {
+      return;
+    }
+
+    if (!originLocation || !destLocation) {
+      return;
+    }
+
+    clearRoute();
+    try {
+      const directionsService = new google.maps.DirectionsService();
+
+      const results = await directionsService.route({
+        origin: new google.maps.LatLng(originLocation.lat, originLocation.lng),
+        destination: new google.maps.LatLng(destLocation.lat, destLocation.lng),
+        travelMode: google.maps.TravelMode.DRIVING,
+      });
+
+      // Update state with the route information
+      setDirectionsResponse(results);
+      setDistance(results.routes[0].legs[0].distance.text);
+      setDuration(results.routes[0].legs[0].duration.text);
+    } catch (error) {
+      console.error("Error fetching directions:", error);
+    }
+  }
+  function clearRoute() {
+    setDirectionsResponse(null);
+    setDistance("");
+    setDuration("");
+  }
 
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -97,25 +147,36 @@ export default function Index() {
     }
   }, []);
 
-  const onLoad = useCallback(
-    (map: google.maps.Map) => {
-      const bounds = new window.google.maps.LatLngBounds(currentLocation);
-      map.fitBounds(bounds);
+  useEffect(() => {
+    if (map && currentLocation && !mapInitialized) {
+      map.panTo(currentLocation);
       map.setZoom(15);
-      setMap(map);
-    },
-    [currentLocation]
-  );
+      setMapInitialized(true);
+    }
+  }, [map, currentLocation, mapInitialized]);
+
+  const onLoad = useCallback((map: google.maps.Map) => {
+    setMap(map);
+  }, []);
 
   const onUnmount = useCallback(() => {
     setMap(null);
   }, []);
 
-  const onAutoCompleteLoad = (autocomplete: SearchResult) => {
-    setSearchResult(autocomplete);
+  const onAutoCompleteLoad = (
+    autocomplete: SearchResult,
+    isOrigin: boolean
+  ) => {
+    if (isOrigin) {
+      setSearchResultOrigin(autocomplete);
+    } else {
+      setSearchResultDest(autocomplete);
+    }
   };
 
-  const onPlaceChanged = () => {
+  const onPlaceChanged = (isOrigin: boolean) => {
+    const searchResult = isOrigin ? searchResultOrigin : searchResultDest;
+    const inputRef = isOrigin ? originRef : destRef;
     if (searchResult) {
       const place = searchResult.getPlace();
 
@@ -124,7 +185,11 @@ export default function Index() {
           lat: place.geometry.location.lat(),
           lng: place.geometry.location.lng(),
         };
-        setSelectedLocation(newLocation);
+        if (isOrigin) {
+          setOriginLocation(newLocation);
+        } else {
+          setDestLocation(newLocation);
+        }
 
         if (map) {
           map.panTo(newLocation);
@@ -132,27 +197,23 @@ export default function Index() {
         }
       }
 
-      console.log({
-        name: place.name,
-        status: place.business_status,
-        address: place.formatted_address,
-      });
+      if (inputRef.current) {
+        inputRef.current.value = place.formatted_address || "";
+      }
     }
   };
 
   if (loadingLocation) {
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-screen items-center justify-center bg-gray-900">
         <div className="flex flex-col items-center gap-4">
-          <h1 className="text-3xl font-semibold">Location Finder</h1>
-          <div className="text-gray-600">Getting your location...</div>
+          <h1 className="text-3xl font-semibold text-white">Location Finder</h1>
+          <div className="text-gray-400">Getting your location...</div>
           <div
-            className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"
+            className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-white border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"
             role="status"
           >
-            <span className="!absolute !-m-px !h-px !w-px !overflow-hidden !whitespace-nowrap !border-0 !p-0 ![clip:rect(0,0,0,0)]">
-              Getting your location...
-            </span>
+            <span className="sr-only">Getting your location...</span>
           </div>
         </div>
       </div>
@@ -160,66 +221,207 @@ export default function Index() {
   }
 
   return (
-    <div className="flex h-screen items-center justify-center">
-      <div className="flex flex-col items-center gap-8">
-        <h1 className="text-xl font-semibold">Location Finder</h1>
+    <div className="flex h-screen items-center justify-center bg-gray-900">
+      <div className="flex flex-col items-center gap-8 w-[90%] max-w-2xl">
+        <h1 className="text-2xl font-semibold text-white">Location Finder</h1>
         {isLoaded ? (
-          <div className="flex flex-col gap-4">
-            <Autocomplete
-              onLoad={onAutoCompleteLoad}
-              onPlaceChanged={onPlaceChanged}
-              options={{ componentRestrictions: { country: "za" } }}
-            >
-              <input
-                ref={autocompleteRef}
-                type="text"
-                placeholder="Search for a location"
-                className="w-1/2 h-10 px-3 rounded-md shadow-md text-sm outline-none border border-transparent absolute top-10 left-1/2 transform -translate-x-1/2"
-              />
-            </Autocomplete>
-            <div className="rounded-lg overflow-hidden shadow-lg">
+          <div className="flex flex-col gap-4 w-full">
+            <div className="flex items-center justify-between">
+              <label htmlFor="origin" className="text-white">
+                Origin:{" "}
+              </label>
+              <Autocomplete
+                onLoad={(autocomplete) => {
+                  onAutoCompleteLoad(autocomplete, true);
+                }}
+                onPlaceChanged={() => {
+                  onPlaceChanged(true);
+                }}
+                options={{ componentRestrictions: { country: "za" } }}
+              >
+                <input
+                  ref={originRef}
+                  type="text"
+                  placeholder="Enter start location"
+                  className="w-[450px] h-10 px-3 rounded-md shadow-md text-sm outline-none border border-gray-600 bg-gray-800 text-white"
+                />
+              </Autocomplete>
+            </div>
+            <div className="flex items-center justify-between">
+              <label htmlFor="origin" className="text-white">
+                Destination:{" "}
+              </label>
+              <Autocomplete
+                onLoad={(autocomplete) =>
+                  onAutoCompleteLoad(autocomplete, false)
+                }
+                onPlaceChanged={() => onPlaceChanged(false)}
+                options={{ componentRestrictions: { country: "za" } }}
+              >
+                <input
+                  ref={destRef}
+                  type="text"
+                  placeholder="Search for destination"
+                  className="w-[450px] h-10 px-3 rounded-md shadow-md text-sm outline-none border border-gray-600 bg-gray-800 text-white"
+                />
+              </Autocomplete>
+            </div>
+            <div className="flex flex-col">
+              {originLocation && (
+                <>
+                  <label
+                    htmlFor="minmax-range"
+                    className="block mb-2 text-lg font-medium text-gray-900 dark:text-white"
+                  >
+                    {"Set Origin Radius: " + radius + "km"}
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="50"
+                    value={radius}
+                    onChange={(e) => setRadius(Number(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                  />
+                </>
+              )}
+
+              {originLocation && destLocation && (
+                <button
+                  onClick={showRoute}
+                  className="my-4 px-6 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors duration-200 shadow-md"
+                >
+                  Show Route
+                </button>
+              )}
+              {directionsResponse && (
+                <div className="flex justify-between items-center px-4">
+                  <p>{"Distance: " + distance}</p>
+                  <p>{"Duration: " + duration}</p>
+                </div>
+              )}
+            </div>
+            <div className="rounded-lg overflow-hidden shadow-lg h-[500px] w-full">
               <GoogleMap
                 mapContainerStyle={containerStyle}
-                center={selectedLocation || currentLocation}
-                zoom={13}
+                center={currentLocation}
+                zoom={15}
                 onLoad={onLoad}
                 onUnmount={onUnmount}
                 onDblClick={(e) => {
-                  setSelectedLocation({
+                  setOriginLocation({
                     lat: e.latLng?.lat() ?? 0,
                     lng: e.latLng?.lng() ?? 0,
                   });
-                  geocodeLatLng(e.latLng?.lat() ?? 0, e.latLng?.lng() ?? 0);
+                  geocodeLatLng(
+                    e.latLng?.lat() ?? 0,
+                    e.latLng?.lng() ?? 0,
+                    originRef
+                  );
                 }}
               >
-                {/* Current location marker */}
-                <Marker
+                <MarkerF
                   position={currentLocation}
+                  icon={{
+                    path: window.google.maps.SymbolPath.CIRCLE,
+                    scale: 8,
+                    fillColor: "#4285F4",
+                    fillOpacity: 1,
+                    strokeColor: "white",
+                    strokeWeight: 2,
+                  }}
+                  onClick={() => {
+                    setInfowindowOpen(!infowindowOpen);
+                  }}
                   animation={window.google.maps.Animation.DROP}
                   title="You are here"
-                />
-
-                {/* Selected location marker */}
-                {selectedLocation && (
+                >
+                  {infowindowOpen && (
+                    <InfoWindowF
+                      position={currentLocation}
+                      onCloseClick={() => setInfowindowOpen(false)}
+                    >
+                      <div>
+                        <p className="font-semibold text-black">You are here</p>
+                      </div>
+                    </InfoWindowF>
+                  )}
+                </MarkerF>
+                {originLocation && (
+                  <>
+                    <Marker
+                      position={originLocation}
+                      icon={{
+                        path: window.google.maps.SymbolPath.CIRCLE,
+                        scale: 10,
+                        fillColor: "#00FF00", // Green color for origin
+                        fillOpacity: 1,
+                        strokeColor: "white",
+                        strokeWeight: 2,
+                      }}
+                      animation={window.google.maps.Animation.DROP}
+                      title="Selected location"
+                      draggable
+                      onDragEnd={(e) => {
+                        setOriginLocation({
+                          lat: e.latLng?.lat() ?? 0,
+                          lng: e.latLng?.lng() ?? 0,
+                        });
+                        geocodeLatLng(
+                          e.latLng?.lat() ?? 0,
+                          e.latLng?.lng() ?? 0,
+                          originRef
+                        );
+                      }}
+                    />
+                    <Circle
+                      center={originLocation}
+                      radius={radius * 1000}
+                      options={{
+                        zIndex: -1, // Set zIndex to control layering
+                        fillColor: "grey",
+                        fillOpacity: 0.2,
+                        strokeColor: "blue",
+                        strokeOpacity: 0.5,
+                      }}
+                    />
+                  </>
+                )}
+                {destLocation && (
                   <Marker
-                    position={selectedLocation}
+                    position={destLocation}
+                    icon={{
+                      path: window.google.maps.SymbolPath.CIRCLE,
+                      scale: 8,
+                      fillColor: "#FF0000",
+                      fillOpacity: 1,
+                      strokeColor: "white",
+                      strokeWeight: 2,
+                    }}
                     animation={window.google.maps.Animation.DROP}
                     title="Selected location"
                     draggable
                     onDragEnd={(e) => {
-                      setSelectedLocation({
+                      setDestLocation({
                         lat: e.latLng?.lat() ?? 0,
                         lng: e.latLng?.lng() ?? 0,
                       });
-                      geocodeLatLng(e.latLng?.lat() ?? 0, e.latLng?.lng() ?? 0);
+                      geocodeLatLng(
+                        e.latLng?.lat() ?? 0,
+                        e.latLng?.lng() ?? 0,
+                        destRef
+                      );
                     }}
                   />
+                )}
+                {directionsResponse && (
+                  <DirectionsRenderer directions={directionsResponse} />
                 )}
               </GoogleMap>
             </div>
           </div>
         ) : (
-          <div className="text-gray-600">Loading map...</div>
+          <div className="text-gray-400">Loading map...</div>
         )}
       </div>
     </div>
