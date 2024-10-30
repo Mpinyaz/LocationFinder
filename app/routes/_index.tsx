@@ -15,7 +15,7 @@ import {
 import { useCallback, useState, useEffect, useRef, RefObject } from "react";
 
 export const meta: MetaFunction = () => {
-  return [{ title: "Location Finder" }];
+  return [{ title: "Route Calculator" }];
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -175,6 +175,7 @@ export default function Index() {
   };
 
   const onPlaceChanged = (isOrigin: boolean) => {
+    clearRoute();
     const searchResult = isOrigin ? searchResultOrigin : searchResultDest;
     const inputRef = isOrigin ? originRef : destRef;
     if (searchResult) {
@@ -207,7 +208,9 @@ export default function Index() {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-900">
         <div className="flex flex-col items-center gap-4">
-          <h1 className="text-3xl font-semibold text-white">Location Finder</h1>
+          <h1 className="text-3xl font-semibold text-white">
+            Route Calculator
+          </h1>
           <div className="text-gray-400">Getting your location...</div>
           <div
             className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-white border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"
@@ -223,7 +226,7 @@ export default function Index() {
   return (
     <div className="flex h-screen items-center justify-center bg-gray-900">
       <div className="flex flex-col items-center gap-8 w-[90%] max-w-2xl">
-        <h1 className="text-2xl font-semibold text-white">Location Finder</h1>
+        <h1 className="text-5xl font-semibold text-white">Route Calculator</h1>
         {isLoaded ? (
           <div className="flex flex-col gap-4 w-full">
             <div className="flex items-center justify-between">
